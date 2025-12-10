@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (QFrame, QVBoxLayout, QPushButton, QSlider,
 from PyQt6.QtCore import Qt, QPoint
 from PyQt6.QtGui import QColor
 from logic.project import ProjectManager
+from main import ConceptStudio
 
 
 class ToolStation(QFrame):
@@ -85,29 +86,25 @@ class ToolStation(QFrame):
         return btn
     
     def set_tool(self, tool_name):
-        # Auto-Commit if leaving ANY transform tool
-        transform_tools = ["move", "rotate", "scale"]
-        if self.canvas.current_tool in transform_tools and tool_name not in transform_tools: 
-            self.canvas.commit_transform()
-
+        if self.canvas.current_tool == "move" and tool_name != "move": self.canvas.commit_transform()
         self.canvas.current_tool = tool_name
         self.canvas.is_eraser = (tool_name == "eraser")
-        
-        # Visual Button Updates
         self.btn_brush.setChecked(tool_name == "brush")
         self.btn_eraser.setChecked(tool_name == "eraser")
-        # Keep "Move" button lit up for all transform modes so the user knows they are transforming
-        self.btn_move.setChecked(tool_name in transform_tools)
+        self.btn_move.setChecked(tool_name == "move")
         self.btn_lasso.setChecked(tool_name == "lasso")
         self.btn_poly.setChecked(tool_name == "poly_lasso")
         
-        # Cursors
+        if tool_name in ["brush", "eraser"]:
+            self.canvas.setCursor(Qt.CursorShape.BlankCursor)
+        elif tool_name == "move":
+            self.canvas.setCursor(Qt.CursorShape.SizeAllCursor)
+        else:
+            self.canvas.setCursor(Qt.CursorShape.CrossCursor)
+            
         if tool_name == "move": self.canvas.setCursor(Qt.CursorShape.SizeAllCursor)
-        elif tool_name == "rotate": self.canvas.setCursor(Qt.CursorShape.SizeHorCursor) # Left/Right arrows
-        elif tool_name == "scale": self.canvas.setCursor(Qt.CursorShape.SizeBDiagCursor) # Diagonal arrows
         elif "lasso" in tool_name: self.canvas.setCursor(Qt.CursorShape.CrossCursor)
-        elif tool_name in ["brush", "eraser"]: self.canvas.setCursor(Qt.CursorShape.BlankCursor)
-        else: self.canvas.setCursor(Qt.CursorShape.ArrowCursor)
+        else: self.canvas.setCursor(Qt.CursorShape.CrossCursor)
 
     def pick_color(self):
         color = QColorDialog.getColor()
@@ -136,10 +133,8 @@ class ToolStation(QFrame):
         if action == action_save: ProjectManager.save_project(self, self.canvas.layers, self.canvas.canvas_width, self.canvas.canvas_height)
         elif action == action_load: 
             ProjectManager.load_project(self, self.canvas)
-            if hasattr(self.parent(), 'layer_panel'): 
-                self.parent().layer_panel.refresh_list()
+            if isinstance(self.parent(), ConceptStudio): self.parent().layer_panel.refresh_list()
         elif action == action_import: 
             self.canvas.import_image_layer()
-            if hasattr(self.parent(), 'layer_panel'): 
-                self.parent().layer_panel.refresh_list()
+            if isinstance(self.parent(), ConceptStudio): self.parent().layer_panel.refresh_list()
         elif action == action_export: ProjectManager.export_image(self, self.canvas)
