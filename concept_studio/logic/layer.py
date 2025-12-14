@@ -25,20 +25,22 @@ class Layer:
             width: Canvas width in pixels
             height: Canvas height in pixels
         """
-        # Basic properties
+        
+        #=== Basic properties ===#
         self.name = name
         self.visible = True
         self.opacity = 1.0  # 0.0 to 1.0
         self.blend_mode = "Normal"
+        self.is_floating = False
         
-        # Transform properties (v6 feature - like Photoshop!)
-        self.x = 0.0  # Horizontal position offset
-        self.y = 0.0  # Vertical position offset
-        self.scale_x = 1.0  # Horizontal scale (1.0 = 100%)
-        self.scale_y = 1.0  # Vertical scale (1.0 = 100%)
-        self.rotation = 0.0  # Rotation in degrees
+        #=== Transform properties ===#
+        self.x = 0.0
+        self.y = 0.0
+        self.scale_x = 1.0
+        self.scale_y = 1.0
+        self.rotation = 0.0
         
-        # Image buffer - ARGB format
+        #=== Image buffer - ARGB format ===#
         # A+ NOTE: Premultiplied = Alpha is already applied to RGB
         # This makes blending faster!
         self.image = QImage(width, height, QImage.Format.Format_ARGB32_Premultiplied)

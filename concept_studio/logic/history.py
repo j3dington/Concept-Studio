@@ -51,10 +51,10 @@ class HistoryManager:
         if layer_index < len(layers):
             current_layer = layers[layer_index]
             
-            # Save current state to redo stack
+            #=== Save current state to redo stack ===#
             self.redo_stack.append((layer_index, current_layer.image.copy()))
             
-            # Restore old state
+            #=== Restore old state ===#
             painter = QPainter(current_layer.image)
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
             painter.drawImage(0, 0, old_image)
@@ -82,10 +82,10 @@ class HistoryManager:
         if layer_index < len(layers):
             current_layer = layers[layer_index]
             
-            # Save current state to undo stack
+            #=== Save current state to undo stack ===#
             self.undo_stack.append((layer_index, current_layer.image.copy()))
             
-            # Apply new state
+            #=== Apply new state ===#
             painter = QPainter(current_layer.image)
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
             painter.drawImage(0, 0, new_image)

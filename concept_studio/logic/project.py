@@ -1,184 +1,171 @@
-"""
-Project Manager for Save/Load/Export
-
-Handles:
-- Saving projects (.csp files)
-- Loading projects
-- Exporting images (.png)
-
-"""
-
-import pickle
+import zipfile
+import json
+import os
+import shutil
 from PyQt6.QtWidgets import QFileDialog
-from PyQt6.QtGui import QPainter, QImage
-from PyQt6.QtCore import Qt, QBuffer, QByteArray, QIODevice
-from .layer import Layer
-
+from PyQt6.QtCore import QBuffer, QByteArray, QIODevice
+from PyQt6.QtGui import QImage, QPainter
 
 class ProjectManager:
-    """Handles saving, loading, and exporting projects"""
-    
     @staticmethod
     def save_project(parent, layers, width, height):
-        """
-        Save project to .csp file
-        
-        Args:
-            parent: Parent widget for file dialog
-            layers: List of Layer objects
-            width: Canvas width
-            height: Canvas height
-        """
-        filename, _ = QFileDialog.getSaveFileName(
-            parent, 
-            "Save Project", 
-            "", 
-            "Concept Studio Project (*.csp)"
-        )
-        
-        if not filename:
-            return  # User cancelled
-        
-        # Convert each layer to serializable format
-        layer_data = []
-        for layer in layers:
-            # Convert QImage to bytes
-            ba = QByteArray()
-            buff = QBuffer(ba)
-            buff.open(QIODevice.OpenModeFlag.WriteOnly)
-            layer.image.save(buff, "PNG")  # Save as PNG in memory
+        # === Ask where to save === #
+        filename, _ = QFileDialog.getSaveFileName(parent, "Save Project", "", "Concept Studio Project (*.csp)")
+        if not filename: return
             
-            layer_data.append({
-                "name": layer.name,
-                "visible": layer.visible,
-                "opacity": layer.opacity,
-                "blend_mode": layer.blend_mode,
-                "x": layer.x,
-                "y": layer.y,
-                "scale_x": layer.scale_x,
-                "scale_y": layer.scale_y,
-                "rotation": layer.rotation,
-                "image_bytes": ba.data()  # PNG as bytes
-            })
+        print(f"💾 Saving to {filename}...")
         
-        # Create project state
-        project_state = {
-            "width": width,
-            "height": height,
-            "layers": layer_data,
-            "version": "6.0"  # For future compatibility
-        }
+        # === Create a Temporary Folder Structure === #
+        temp_dir = "temp_save_data"
+        if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
+        os.makedirs(temp_dir)
         
-        # Save with pickle
-        with open(filename, "wb") as f:
-            pickle.dump(project_state, f)
-        
-        print(f"💾 Saved project: {filename}")
-    
-    @staticmethod
-    def load_project(parent, canvas):
-        """
-        Load project from .csp file
-        
-        Args:
-            parent: Parent widget for file dialog
-            canvas: Canvas widget to load into
-        """
-        filename, _ = QFileDialog.getOpenFileName(
-            parent, 
-            "Open Project", 
-            "", 
-            "Concept Studio Project (*.csp)"
-        )
-        
-        if not filename:
-            return  # User cancelled
+        # === Save Layers as PNGs === #
+        layer_info = []
         
         try:
-            # Load project state
-            with open(filename, "rb") as f:
-                project_state = pickle.load(f)
-            
-            # Reconstruct layers
-            new_layers = []
-            for l_data in project_state["layers"]:
-                # Create new layer
-                new_layer = Layer(
-                    l_data["name"], 
-                    project_state["width"], 
-                    project_state["height"]
-                )
+            for i, layer in enumerate(layers):
+                # === Save the Image Data === #
+                image_name = f"layer_{i}.png"
+                image_path = os.path.join(temp_dir, image_name)
+                layer.image.save(image_path, "PNG")
                 
-                # Restore properties
+                # === Record the Metadata === #
+                layer_info.append({
+                    "name": layer.name,
+                    "filename": image_name,
+                    "visible": layer.visible,
+                    "opacity": layer.opacity,
+                    "blend_mode": layer.blend_mode,
+                    "is_floating": getattr(layer, "is_floating", False),
+                    # Transform Props
+                    "x": getattr(layer, "x", 0),
+                    "y": getattr(layer, "y", 0),
+                    "rotation": getattr(layer, "rotation", 0),
+                    "scale_x": getattr(layer, "scale_x", 1),
+                    "scale_y": getattr(layer, "scale_y", 1)
+                })
+                
+            # === Save the "Stack" (Metadata) as JSON === #
+            project_data = {
+                "width": width,
+                "height": height,
+                "layers": layer_info
+            }
+            
+            with open(os.path.join(temp_dir, "stack.json"), "w") as f:
+                json.dump(project_data, f, indent=4)
+                
+            # === Zip it all up! === #
+            with zipfile.ZipFile(filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for root, dirs, files in os.walk(temp_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        # Add file to zip, but remove the 'temp_save_data' prefix
+                        arcname = os.path.relpath(file_path, temp_dir)
+                        zipf.write(file_path, arcname)
+                        
+            print("✅ Save Complete!")
+            
+        except Exception as e:
+            print(f"❌ Save Failed: {e}")
+        finally:
+            # === Cleanup Temp Files === #
+            if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
+
+    @staticmethod
+    def load_project(parent, canvas):
+        from ui.canvas import Layer 
+        
+        filename, _ = QFileDialog.getOpenFileName(parent, "Open Project", "", "Concept Studio Project (*.csp)")
+        if not filename: return
+        
+        print(f"📂 Loading {filename}...")
+        
+        temp_dir = "temp_load_data"
+        if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
+        
+        try:
+            # === Unzip === #
+            with zipfile.ZipFile(filename, 'r') as zipf:
+                zipf.extractall(temp_dir)
+                
+            # === Read Metadata === #
+            with open(os.path.join(temp_dir, "stack.json"), "r") as f:
+                project_data = json.load(f)
+            
+            # === Reconstruct Layers === #
+            new_layers = []
+            width = project_data["width"]
+            height = project_data["height"]
+            
+            # === Update Canvas Dimensions if Needed (v2 Feature) === #
+            canvas.canvas_width = width
+            canvas.canvas_height = height
+            
+            for l_data in project_data["layers"]:
+                # === Create Blank Layer === #
+                new_layer = Layer(l_data["name"], width, height)
+                
+                # === Restore Properties === #
                 new_layer.visible = l_data["visible"]
                 new_layer.opacity = l_data["opacity"]
                 new_layer.blend_mode = l_data.get("blend_mode", "Normal")
+                new_layer.is_floating = l_data.get("is_floating", False)
                 
-                # Restore transform
-                new_layer.x = l_data.get("x", 0.0)
-                new_layer.y = l_data.get("y", 0.0)
-                new_layer.scale_x = l_data.get("scale_x", 1.0)
-                new_layer.scale_y = l_data.get("scale_y", 1.0)
-                new_layer.rotation = l_data.get("rotation", 0.0)
+                new_layer.x = l_data.get("x", 0)
+                new_layer.y = l_data.get("y", 0)
+                new_layer.rotation = l_data.get("rotation", 0)
+                new_layer.scale_x = l_data.get("scale_x", 1)
+                new_layer.scale_y = l_data.get("scale_y", 1)
                 
-                # Restore image from bytes
-                loaded_image = QImage.fromData(l_data["image_bytes"])
-                new_layer.image = loaded_image.convertToFormat(
-                    QImage.Format.Format_ARGB32_Premultiplied
-                )
+                # === Load Image Data === #
+                image_path = os.path.join(temp_dir, l_data["filename"])
+                if os.path.exists(image_path):
+                    loaded_image = QImage(image_path)
+                    # Convert ensures format compatibility
+                    new_layer.image = loaded_image.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
                 
                 new_layers.append(new_layer)
             
-            # Replace canvas layers
+            # === Apply to Canvas === #
             canvas.layers = new_layers
             canvas.active_layer_index = len(new_layers) - 1
             canvas.history.undo_stack.clear()
-            canvas.history.redo_stack.clear()
             canvas.update()
-            
-            print(f"✅ Loaded project: {filename}")
-            print(f"   Layers: {len(new_layers)}")
+            print("✅ Load Complete!")
             
         except Exception as e:
-            print(f"❌ Error loading project: {e}")
-    
+            print(f"❌ Load Failed: {e}")
+        finally:
+            if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
+            
     @staticmethod
     def export_image(parent, canvas):
-        """
-        Export flattened image as PNG
+        filename, _ = QFileDialog.getSaveFileName(parent, "Export PNG", "", "PNG Image (*.png)")
+        if not filename: return
         
-        Args:
-            parent: Parent widget for file dialog
-            canvas: Canvas widget to export from
-        """
-        filename, _ = QFileDialog.getSaveFileName(
-            parent, 
-            "Export PNG", 
-            "", 
-            "PNG Image (*.png)"
-        )
+        # === Create a buffer for the final image === #
+        result = QImage(canvas.canvas_width, canvas.canvas_height, QImage.Format.Format_ARGB32_Premultiplied)
+        result.fill(0) # Transparent
         
-        if not filename:
-            return  # User cancelled
-        
-        # Create result image
-        result = QImage(
-            canvas.canvas_width, 
-            canvas.canvas_height, 
-            QImage.Format.Format_ARGB32_Premultiplied
-        )
-        result.fill(Qt.GlobalColor.transparent)
-        
-        # Composite all visible layers
         painter = QPainter(result)
+        from PyQt6.QtGui import QTransform
+        
         for layer in canvas.layers:
             if layer.visible:
                 painter.setOpacity(layer.opacity)
-                # Note: Transforms not applied in basic export
-                # Add transform logic here for v7!
+                
+                # Apply the same matrix math as the canvas
+                t = QTransform()
+                t.translate(layer.x, layer.y)
+                cx, cy = layer.image.width()/2, layer.image.height()/2
+                t.translate(cx, cy); t.rotate(layer.rotation); t.scale(layer.scale_x, layer.scale_y); t.translate(-cx, -cy)
+                
+                painter.setTransform(t)
                 painter.drawImage(0, 0, layer.image)
+                # Reset transform for next layer
+                painter.resetTransform()
+                
         painter.end()
-        
-        # Save
         result.save(filename)
-        print(f"🖼️ Exported image: {filename}")

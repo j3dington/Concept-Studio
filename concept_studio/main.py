@@ -1,81 +1,118 @@
 import sys
-from PyQt6.QtWidgets import QApplication, QMainWindow
-from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication, QMainWindow, QToolBar, QDockWidget
+from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QAction, QFont
 
-# Import our organized modules
-from config import STYLESHEET
-from logic import Layer, HistoryManager, ProjectManager
-from ui import Canvas, ToolStation, LayerPanel
-
+# Custom Imports
+from ui.startup_dialog import StartupDialog
+from ui.canvas import Canvas
+from ui.tool_station import ToolStation
+from ui.layer_panel import LayerPanel
+import styles
+import config_manager
+import utils
 
 class ConceptStudio(QMainWindow):    
-    def __init__(self):
+    def __init__(self, width=None, height=None):
         super().__init__()
         
-        # Window setup
-        self.setWindowTitle("Concept Studio v6 - Organized")
-        self.resize(1200, 800)
+        # 1. Config & Window Setup
+        self.config = config_manager.CONFIG
+        app_settings = self.config['app_settings']
         
-        # 1. Create Canvas (the drawing area)
-        self.canvas = Canvas()
+        final_w = width if width else app_settings['initial_width']
+        final_h = height if height else app_settings['initial_height']
+        
+        self.setWindowTitle(app_settings['title'])
+        self.resize(final_w, final_h)
+        self.setStyleSheet(styles.get_stylesheet())
+        
+        # 2. The Canvas
+        self.canvas = Canvas(self, width=self.width(), height=self.height())
         self.setCentralWidget(self.canvas)
         
-        # 2. Create Tool Station (PARENTED TO CANVAS)
-        # This makes it float on top of the canvas!
-        self.station = ToolStation(self.canvas, parent=self.canvas)
-        self.station.setGeometry(20, 20, 70, 450)
-        self.station.show()
-        self.station.raise_()  # Bring to front
+        # 3. The Docks
+        self.station = ToolStation(self.canvas, parent=self)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.station)
         
-        # 3. Create Layer Panel (PARENTED TO CANVAS)
-        self.layer_panel = LayerPanel(self.canvas, parent=self.canvas)
-        self.layer_panel.move(self.width() - 220, 20)
-        self.layer_panel.show()
-        self.layer_panel.raise_()  # Bring to front
+        self.layer_panel = LayerPanel(self.canvas, self)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.layer_panel)
         
-        # Apply styling
-        self.setStyleSheet(STYLESHEET)
+        # 4. Menus & Actions
+        self.setup_actions()
+        self.setup_menubar()
+        self.setup_toolbar()
         
-        print("=" * 60)
-        print("🎨 CONCEPT STUDIO v6 - Organized Edition")
-        print("=" * 60)
-        print("✨ Features:")
-        print("   • Brush & Eraser tools")
-        print("   • Move/Transform layers")
-        print("   • Lasso selection")
-        print("   • Undo/Redo (Ctrl+Z/Y)")
-        print("   • Save/Load projects")
-        print("   • Blend modes")
-        print()
-        print("⌨️  Shortcuts:")
-        print("   B - Brush | E - Eraser | V - Move")
-        print("   L - Lasso | P - Polygon Lasso")
-        print("   [ ] - Brush size | Ctrl+Z/Y - Undo/Redo")
-        print("=" * 60)
-    
-    def resizeEvent(self, event):
-        """
-        Handle window resizing
-        
-        A+ NOTE: Keep layer panel pinned to right side
-        Like how icons stay in place when you resize Windows!
-        """
-        # Keep layer panel pinned to right
-        self.layer_panel.move(self.width() - 220, 20)
-        super().resizeEvent(event)
+        # Start Unlocked
+        self.toggle_ui_lock(False)
 
+    def setup_actions(self):
+        """Define logic for menus and buttons"""
+        self.act_exit = QAction("Exit", self)
+        self.act_exit.triggered.connect(self.close)
 
-def main():
-    # Create Qt application
-    app = QApplication(sys.argv)
-    
-    # Create main window
-    window = ConceptStudio()
-    window.show()
-    
-    # Run event loop (keeps app running)
-    sys.exit(app.exec())
+        self.act_lock = QAction("Lock Workspace", self)
+        self.act_lock.setCheckable(True)
+        self.act_lock.toggled.connect(self.toggle_ui_lock)
 
+    def setup_menubar(self):
+        """Create the top text menu"""
+        menu = self.menuBar()
+        
+        file_menu = menu.addMenu("&File")
+        file_menu.addAction(self.act_exit)
+        
+        view_menu = menu.addMenu("&View")
+        view_menu.addAction(self.act_lock)
+        
+        # Window menu lets users bring back closed panels
+        win_menu = menu.addMenu("&Window")
+        win_menu.addAction(self.station.toggleViewAction())
+        win_menu.addAction(self.layer_panel.toggleViewAction())
+
+    def setup_toolbar(self):
+        """Create the icon bar"""
+        toolbar = QToolBar("Main Toolbar")
+        toolbar.setIconSize(QSize(16, 16))
+        toolbar.setMovable(False)
+        self.addToolBar(toolbar)
+        
+        toolbar.addAction(self.act_lock)
+
+    def toggle_ui_lock(self, locked):
+        """Freezes or Unfreezes the panels"""
+        docks = [self.station, self.layer_panel]
+        for dock in docks:
+            if locked:
+                dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
+                dock.setTitleBarWidget(None) # Can hide title bar here if desired
+            else:
+                dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable | 
+                                QDockWidget.DockWidgetFeature.DockWidgetFloatable | 
+                                QDockWidget.DockWidgetFeature.DockWidgetClosable)
 
 if __name__ == "__main__":
-    main()
+    app = QApplication(sys.argv)
+    
+    # === FONT LOADING ===
+    # Attempt to load custom fonts. Ensure these files exist in assets/fonts/
+    # If not found, it falls back to Segoe UI automatically.
+    ui_font = utils.load_custom_font("DMSans-Regular.ttf")
+    content_font = utils.load_custom_font("Lora-Regular.ttf")
+    
+    # Update Config with the REAL font names found by the system
+    config_manager.CONFIG['theme']['font_family_ui'] = ui_font
+    config_manager.CONFIG['theme']['font_family_content'] = content_font
+    
+    # Set fallback
+    app.setFont(QFont(ui_font, 10))
+
+    # === STARTUP ===
+    dialog = StartupDialog()
+    if dialog.exec():
+        w, h = dialog.get_dimensions()
+        window = ConceptStudio(width=w, height=h)
+        window.show()
+        sys.exit(app.exec())
+    else:
+        sys.exit()
