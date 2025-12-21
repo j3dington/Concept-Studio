@@ -283,51 +283,54 @@ class Canvas(QWidget):
         event.accept()
 
     def mousePressEvent(self, event):
+        # 1. STOP: Don't let the engine touch ANYTHING yet.
+        self.is_drawing = False 
         
-        self.active_layer = self.layers[self.current_layer_index]
-        self.stroke_bbox = QRect(event.pos(), QSize(1, 1))
-        self.pre_stroke_snapshot = self.active_layer.pixmap.toImage()
-        if len(self.undo_stack) > 50:
-            self.undo_stack.pop(0)
+        # 2. THE VAULT: Capture the state. 
+        # We use .copy() to ensure it's a separate physical chunk of RAM.
+        active_layer = self.layers[self.current_layer_index]
+        self.pre_stroke_full_image = active_layer.pixmap.toImage().copy()
         
-        point = event.position().toPoint()
-        if event.modifiers() & Qt.KeyboardModifier.AltModifier:
-            self.color_picker(point)
-        else:
-            self.handle_press(point, 1.0)
-            
-    def mouseMoveEvent(self, event):
-        
-        if not hasattr(self, 'stroke_bbox') or self.stroke_bbox.isNull():
+        # 3. VERIFY: Ensure the backup exists before proceeding
+        if self.pre_stroke_full_image.isNull():
+            print("CRITICAL: Backup failed! Aborting stroke to prevent ghosts.")
             return
 
-        margin = int(self.brush_size + 10)
-        new_rect = QRect(event.pos().x() - margin, event.pos().y() - margin, 
+        # 4. START: Only NOW do we let the ink flow.
+        pos = event.position().toPoint()
+        self.is_drawing = True
+        self.handle_press(pos, 1.0)
+            
+    def mouseMoveEvent(self, event):
+        if not hasattr(self, 'stroke_bbox'): return
+        
+        pos = event.position().toPoint()
+        
+        # FIX: We ask the engine for its 'Max Reach'
+        margin = self.engine.max_reach
+        
+        new_rect = QRect(pos.x() - margin, pos.y() - margin, 
                          margin * 2, margin * 2)
         
         self.stroke_bbox = self.stroke_bbox.united(new_rect)
-        margin = int(self.brush_size + 10)
-        self.stroke_bbox = self.stroke_bbox.united(
-            QRect(event.pos().x() - margin, event.pos().y() - margin, 
-                  margin * 2, margin * 2)
-        )
+        self.handle_move(pos, 1.0, event.buttons())
+    
+    def mouseReleaseEvent(self, event):
+        if not self.is_drawing: return
+        self.is_drawing = False
+        
+        self.handle_release(event.button())
+        
+        # Push the FULL image onto the stack
+        self.undo_stack.append(self.pre_stroke_full_image)
+        
+        # Memory Management: Keep only the last 20 full images
+        if len(self.undo_stack) > 20:
+            self.undo_stack.pop(0)
             
-        if not self.hasFocus():
-            self.setFocus()
-        self.handle_move(event.position().toPoint(), 1.0, event.buttons())
     def enterEvent(self, event):
         self.setFocus()
         super().enterEvent(event)
-    def mouseReleaseEvent(self, event):
-        canvas_rect = QRect(0, 0, self.width(), self.height())
-        final_rect = self.stroke_bbox.intersected(canvas_rect)
-
-        delta_image = self.pre_stroke_snapshot.copy(final_rect)
-        self.undo_stack.append((final_rect, delta_image))
-
-        if len(self.undo_stack) > 30:
-            self.undo_stack.pop(0)
-        self.handle_release(event.button())
 
     def handle_press(self, pos, pressure):
         self.setFocus()
@@ -394,21 +397,22 @@ class Canvas(QWidget):
             self.update()
             
     def undo(self):
-        if not self.undo_stack: return
+        if not self.undo_stack: 
+            return
         
-        rect, patch = self.undo_stack.pop()
+        # 1. Pop the backup
+        backup_image = self.undo_stack.pop()
         active_layer = self.layers[self.current_layer_index]
-
-        painter = QPainter(active_layer.pixmap)
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
-        painter.fillRect(rect, Qt.GlobalColor.transparent)
         
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
-        painter.drawImage(rect.topLeft(), patch)
-        painter.end()
-
+        # 2. THE FIX: Physically destroy the old pixmap to clear any 'sticky' pixels
+        active_layer.pixmap = QPixmap.fromImage(backup_image)
+        
+        # 3. THE SCRUB: Force the widget to ignore its cached drawing and start over
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
+        
         self.compose_layers()
-        self.update()
+        self.update() # This triggers a full repaint of the widget
+        
     def handle_move(self, pos, pressure, buttons):
         if self.is_panning:
             self.view_offset += (pos - self.pan_start)

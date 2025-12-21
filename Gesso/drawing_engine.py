@@ -33,6 +33,13 @@ class DrawingEngine:
         
         self.update_brush_tip()
 
+    @property
+    def max_reach(self):
+        """Calculates the furthest a pixel could possibly land from the mouse."""
+        # Base size + Scatter Radius
+        scatter_radius = self.brush_size * 2.0 * self.jitter_scatter
+        return int(self.brush_size + scatter_radius + 20)
+
     def update_brush_tip(self):
         if self.brush_shape_name == "Soft":
             self.current_brush_tip = get_soft_brush_pixmap(self.brush_size, self.brush_color)

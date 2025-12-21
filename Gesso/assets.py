@@ -32,7 +32,6 @@ def get_qicon(filename, custom_color=None):
     if not filename.endswith(".svg"): filename += ".svg"
     path = os.path.join(ICON_DIR, filename)
     if not os.path.exists(path):
-        print(f"❌ Missing Icon File: {path}")
         return QIcon()
     try:
         with open(path, "r", encoding="utf-8") as f: raw_svg = f.read()
