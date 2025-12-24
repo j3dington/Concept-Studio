@@ -1,12 +1,34 @@
-def get_stylesheet(base_color="#FFFFFF", text_color="#ca6e3e", accent_color="#ca6e3e", header_font="Segoe UI", body_font="Segoe UI"):
+def get_stylesheet(base_color="#FFFFFF", text_color="#212121", accent_color="#FF6000", header_font="Inter", body_font="Segoe UI"):
     """
-    The 'Modern Business Card' Aesthetic.
-    - Tighter radiuses (12px instead of 30px) for a more technical feel.
-    - High letter-spacing on headers (Editorial look).
-    - Subtle borders that look like expensive cardstock.
+    The 'ArtStation Light' Aesthetic (Refactored).
+    - Unified ID selectors for custom frames.
+    - Consistent padding and margin for high-density UI.
+    - Centralized accenting for interactive states.
     """
     return f"""
-    /* --- 1. GLOBAL TYPOGRAPHY --- */
+    /* --- 1. THE WINDOW SHELL (Integrated Frame) --- */
+    #RootFrame {{
+        background-color: #212121;
+        border: 2px solid {accent_color};
+        border-radius: 12px;
+    }}
+
+    #TitleBar {{
+        background-color: #FFFFFF;
+        border-bottom: 1px solid #E1E4E8;
+        border-top-left-radius: 10px;
+        border-top-right-radius: 10px;
+    }}
+
+    #TitleBar QLabel {{
+        color: {accent_color};
+        font-family: '{header_font}';
+        font-weight: 900;
+        font-size: 10pt;
+        letter-spacing: 2px;
+    }}
+    
+    /* --- 2. GLOBAL TYPOGRAPHY --- */
     QWidget {{
         font-family: '{body_font}', 'Segoe UI', sans-serif;
         color: {text_color};
@@ -14,70 +36,116 @@ def get_stylesheet(base_color="#FFFFFF", text_color="#ca6e3e", accent_color="#ca
         selection-color: white;
     }}
 
-    /* --- 2. THE DESK (Canvas Background) --- */
+    /* --- 3. WORKSPACE COMPONENTS (Canvas & Panels) --- */
     QWidget#Canvas {{
-        background-color: #F0F0F0; /* Slightly cooler grey, like a gallery wall */
+        background-color: {text_color};
     }}
 
-    /* --- 3. THE PANELS (The "Business Cards") --- */
     QFrame#TheBag, QFrame#LayerPanel, QFrame#BrushStudio {{
         background-color: {base_color};
-        border: 1px solid #D6D6D6;
-        border-radius: 16px; 
+        border: 1px solid #E0E0E0;
+        border-radius: 8px;
     }}
 
-    /* --- 4. HEADERS & LABELS (The "Brand") --- */
-    /* Applied to "SIZE", "OPACITY", "LAYERS" */
     QLabel {{
         font-family: '{header_font}';
-        font-size: 8pt;
-        font-weight: 800; /* Extra Bold */
-        color: #999999;   /* Muted Silver */
-        letter-spacing: 2px; /* Wide tracking = Expensive feel */
+        font-size: 9pt;
+        font-weight: 600;
+        color: #757575;
+        letter-spacing: 0.5px; 
         text-transform: uppercase;
         margin-bottom: 2px;
     }}
 
-    /* --- 5. TOOL BUTTONS (Icons) --- */
+    /* --- 4. TOOLBARS & MENUS (Integrated Top Row) --- */
+    QMenuBar {{
+        background-color: #FFFFFF;
+        /* Reducing vertical padding from 5px/10px to 2px */
+        padding: 2px 10px; 
+        border-bottom: 1px solid #E1E4E8;
+        font-family: '{body_font}';
+        font-size: 9pt;
+        font-weight: 500;
+        color: #424242;
+        /* Explicitly setting a small height */
+        max-height: 25px;
+    }}
+
+    QMenuBar::item {{
+        background: transparent;
+        padding: 2px 8px; /* Tighter padding for the 'View' text */
+        margin-right: 2px;
+        border-radius: 4px;
+    }}
+
+    QMenuBar::item:selected {{
+        background-color: #FFF5ED;
+        color: {accent_color};
+    }}
+
+    QMenu {{
+        background-color: #FFFFFF;
+        border: 1px solid #D6D6D6;
+        padding: 4px;
+        border-radius: 8px;
+    }}
+
+    QMenu::item {{
+        padding: 8px 25px 8px 20px;
+        border-radius: 4px;
+    }}
+
+    QMenu::item:selected {{
+        background-color: {accent_color};
+        color: #FFFFFF;
+    }}
+
+    /* --- 5. INTERACTIVE TOOLS (Buttons & Sliders) --- */
     QToolButton {{
         background-color: transparent;
-        border-radius: 8px; /* Soft Square (Squircle) instead of Circle */
+        border-radius: 6px;
         icon-size: 22px;
-        color: #777777;
+        color: #424242;
         margin: 2px;
     }}
 
     QToolButton:hover {{
-        background-color: #F5F5F5; /* Very subtle hover */
-        color: {text_color};
-        border: 1px solid #E0E0E0;
+        background-color: #F0F0F0;
+        border: 1px solid #D6D6D6;
     }}
 
     QToolButton:checked {{
-        background-color: {text_color}; /* Solid Charcoal for active tool */
+        background-color: {accent_color};
         color: #FFFFFF;
         border: none;
     }}
     
-    /* SPECIAL: The Brush Shape Button ("SOFT") */
-    /* Looks like a small pill tag */
+    /* Brush Shape Pill Button */
     QToolButton[popupMode="1"] {{ 
-        font-family: '{header_font}';
         font-weight: 700;
-        background-color: #F2F2F2;
-        border: 1px solid #E0E0E0;
+        background-color: #FAFAFA;
+        border: 1px solid #D6D6D6;
         color: {text_color};
-        border-radius: 4px;
-        padding-left: 8px;
-        padding-right: 8px;
-        letter-spacing: 1px;
-    }}
-    QToolButton[popupMode="1"]:hover {{
-        border: 1px solid {accent_color};
-        color: {accent_color};
+        border-radius: 12px;
+        padding: 4px 12px;
     }}
 
-    /* --- 6. LAYER LIST (The Stack) --- */
+    QSlider::groove:horizontal {{
+        height: 4px;
+        background: #E0E0E0;
+        border-radius: 2px;
+    }}
+
+    QSlider::handle:horizontal {{
+        background: {accent_color};
+        width: 14px;
+        height: 14px;
+        margin: -5px 0;
+        border-radius: 7px;
+        border: 2px solid #FFFFFF;
+    }}
+
+    /* --- 6. LAYER PANEL LISTS --- */
     QListWidget {{
         background-color: transparent;
         border: none;
@@ -85,90 +153,32 @@ def get_stylesheet(base_color="#FFFFFF", text_color="#ca6e3e", accent_color="#ca
     }}
 
     QListWidget::item {{
-        background-color: transparent;
-        color: {text_color};
-        border-bottom: 1px solid #EEEEEE; /* Separator lines */
-        padding: 10px 4px;
-        margin: 0px 8px;
+        background-color: #FFFFFF;
+        color: #424242;
+        border-bottom: 1px solid #F0F0F0;
+        padding: 12px 10px;
+        margin: 2px 8px;
+        border-radius: 4px;
     }}
 
     QListWidget::item:selected {{
-        background-color: transparent;
+        background-color: #FFF5ED;
         color: {accent_color};
-        font-weight: bold;
-        border-bottom: 2px solid {accent_color}; /* Active underline */
+        font-weight: 700;
+        border-left: 4px solid {accent_color};
     }}
-    
-    QListWidget::item:hover {{
+
+    /* --- 7. INPUTS & DROPDOWNS --- */
+    QComboBox {{
         background-color: #FAFAFA;
-    }}
-
-    /* --- 7. SLIDERS (Minimalist) --- */
-    QSlider::groove:horizontal {{
-        border: none;
-        height: 2px; /* Ultra thin line */
-        background: #E0E0E0;
-        border-radius: 1px;
-    }}
-
-    QSlider::handle:horizontal {{
-        background: {text_color}; /* Sharp Black Dot */
-        width: 10px;
-        height: 10px;
-        margin: -4px 0;
-        border-radius: 5px; /* Perfect Circle */
-        border: 2px solid {base_color}; /* White ring around it */
-    }}
-    QSlider::handle:horizontal:hover {{
-        background: {accent_color};
-        width: 12px;
-        height: 12px;
-        margin: -5px 0;
-        border-radius: 6px;
-    }}
-
-    /* --- 8. MENUS (Popups) --- */
-    QMenu {{
-        background-color: {base_color};
-        border: 1px solid #D6D6D6;
-        font-family: '{body_font}';
-        padding: 4px;
-        border-radius: 8px;
-    }}
-    QMenu::item {{
-        padding: 6px 20px;
-        border-radius: 4px;
-        color: {text_color};
-    }}
-    QMenu::item:selected {{
-        background-color: {text_color}; /* Invert colors on hover */
-        color: white;
-    }}
-    
-    /* --- 9. SMALL ACTION BUTTONS (Layer Panel) --- */
-    QPushButton#SmallBtn {{
-        background-color: #F8F8F8;
         border: 1px solid #E0E0E0;
-        border-radius: 18px; /* Makes a 36px button a perfect circle */
-        padding: 5px;
+        border-radius: 6px;
+        padding: 4px 10px;
+        min-height: 25px;
+        color: #424242;
     }}
 
-    QPushButton#SmallBtn:hover {{
-        background-color: #FFFFFF;
+    QComboBox:hover {{
         border: 1px solid {accent_color};
-    }}
-
-    QPushButton#SmallBtn:pressed {{
-        background-color: #EEEEEE;
-        border: 1px solid #CCCCCC;
-    }}
-    
-    #SmallBtn {{
-        background-color: transparent;
-        border-radius: 20px;
-    }}
-
-    #SmallBtn:hover {{
-        background-color: #e0e0e0; /* Highlight when hovering */
     }}
     """

@@ -1,7 +1,7 @@
 import math
 import random
 from collections import deque
-from PyQt6.QtGui import QPainter, QColor, QPixmap, QTransform
+from PyQt6.QtGui import QPainter, QColor, QPixmap, QTransform, QPainterPath, QPolygon, QPolygonF
 from PyQt6.QtCore import Qt, QPointF, QRect, QPoint
 
 from assets import get_soft_brush_pixmap, load_custom_brush
@@ -19,6 +19,7 @@ class DrawingEngine:
         self.brush_color = QColor("#000000")
         self.brush_shape_name = "Soft"
         self.current_brush_tip = None
+        
         
         # Dynamics
         self.brush_flow = 1.0
@@ -109,24 +110,39 @@ class DrawingEngine:
         painter.end()
 
     # --- MAIN DRAWING LOOP ---
-    def draw_line(self, layer_pixmap, start, end, p_start, p_end, is_eraser=False):
+    def draw_line(self, layer_pixmap, start, end, p_start, p_end, is_eraser=False, selection_data=None):
+        print("ENGINE: DRAWING AT", end)
         if not layer_pixmap or not self.current_brush_tip: 
             return
 
         painter = QPainter(layer_pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         
-        if is_eraser:
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationOut)
-        else:
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        can_clip = False
+        
+        if selection_data:
+            rect = selection_data.get('rect')
+            if rect and not rect.isEmpty():
+                painter.setClipRect(rect)
+                can_clip = True
+                
+            # 2. LASSO CHECK
+            elif selection_data.get('lasso') and len(selection_data['lasso']) > 2:
+                path = QPainterPath()
+                points_as_floats = [QPointF(p) for p in selection_data['lasso']]
+                from PyQt6.QtGui import QPolygonF 
+                path.addPolygon(QPolygonF(points_as_floats))
+                
+                painter.setClipPath(path)
+                can_clip = True
+        
+        if not can_clip:
+            painter.setClipping(False)
+        # ---------------------------
             
+        # --- DRAWING MATH ---
         dist_x = end.x() - start.x()
         dist_y = end.y() - start.y()
         segment_length = math.sqrt(dist_x**2 + dist_y**2)
-        
-        # ✅ FIXED: Removed spacing override for large brushes
         spacing = max(1.0, self.brush_size * self.brush_spacing_factor)
 
         if segment_length < 0.001:
@@ -136,13 +152,13 @@ class DrawingEngine:
             while (traveled + self.dist_to_next_dot) <= segment_length:
                 traveled += self.dist_to_next_dot
                 t = traveled / segment_length
-                
                 point = QPointF(start.x() + (dist_x * t), start.y() + (dist_y * t))
                 pressure = p_start + (p_end - p_start) * t
-                
                 self.draw_stamp(painter, point, pressure, is_eraser)
                 self.dist_to_next_dot = spacing
             self.dist_to_next_dot -= (segment_length - traveled)
+
+        # VERY IMPORTANT: Always end the painter to "Save" changes to the RAM
         painter.end()
 
     def draw_stamp(self, painter, pos, pressure, is_eraser):

@@ -276,3 +276,30 @@ class BrushSettingsPanel(DraggableFrame):
             getattr(self.canvas, 'jitter_scatter', 0.0),
             getattr(self.canvas, 'jitter_hue', 0.0)
         )
+        
+class BrushSettings:
+    def __init__(self):
+        # 1. Initialize the starting size
+        self._current_size = 10 
+        # 2. Set limits (Min and Max)
+        self.min_size = 1
+        self.max_size = 100
+
+    # 3. The "Getter" - This lets other files READ the size
+    def get_size(self):
+        return self._current_size
+
+    # 4. The "Setter" - This is what you'll call from the keyboard shortcut
+    def set_size(self, new_size):
+        # Logic: If the new size is within our safe bounds, update it
+        if self.min_size <= new_size <= self.max_size:
+            self._current_size = new_size
+        else:
+            print(f"Size {new_size} is out of bounds!")
+    
+    def adjust_size(self, amount):
+        # Take the current size and add the 'amount' (which could be +5 or -5)
+        new_calculated_size = self._current_size + amount
+        
+        # Now we use our 'set_size' method to make sure it's safe!
+        self.set_size(new_calculated_size)

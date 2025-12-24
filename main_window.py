@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                             QToolButton, QFrame, QSizePolicy, QSpacerItem, QPushButton,
-                            QSlider, QLabel, QColorDialog, QFileDialog, QMessageBox, QMenu)
+                            QSlider, QLabel, QColorDialog, QFileDialog, QMessageBox, QMenu,
+                            QDialog, QSpinBox, QFormLayout, QDialogButtonBox, QMenuBar)
 from PyQt6.QtGui import QAction, QActionGroup, QResizeEvent, QColor, QShortcut, QKeySequence
 from PyQt6.QtCore import Qt, QSize, QPoint, QRect
 
@@ -11,16 +12,107 @@ from layer_panel import LayerPanel
 from draggable import DraggableFrame
 from styles import get_stylesheet
 from assets import get_qicon, get_custom_cursor, get_available_brushes, load_custom_fonts
-from brush_settings import BrushSettingsPanel
+from brush_settings import BrushSettingsPanel, BrushSettings
 from diagnostics import DiagnosticsPanel
 from reference_board_window import ReferenceBoardWindow
+from drawing_engine import DrawingEngine
+
+class NewCanvasDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("NEW PROJECT")
+        self.setFixedSize(300, 200)
+        
+        self.setStyleSheet("""
+            QDialog { background-color: #FFFFFF; border: 2px solid #FF6000; border-radius: 10px; }
+            QLabel { font-weight: bold; color: #757575; }
+            QSpinBox { padding: 5px; border: 1px solid #E0E0E0; border-radius: 4px; }
+        """)
+
+        layout = QFormLayout(self)
+        
+        # Inputs for Width/Height
+        self.width_input = QSpinBox()
+        self.width_input.setRange(100, 8000)
+        self.width_input.setValue(1920) # Default to Full HD
+        
+        self.height_input = QSpinBox()
+        self.height_input.setRange(100, 8000)
+        self.height_input.setValue(1080)
+
+        layout.addRow("WIDTH (PX)", self.width_input)
+        layout.addRow("HEIGHT (PX)", self.height_input)
+
+        # OK/Cancel Buttons
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
+
+    def get_dimensions(self):
+        return self.width_input.value(), self.height_input.value()
+
+class CustomTitleBar(QFrame):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setObjectName("TitleBar")
+        self.setFixedHeight(40)
+        self.parent = parent
+        
+        self.drag_pos = QPoint() 
+        
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(15, 0, 5, 0)
+        
+        self.title_label = QLabel("GESSO")
+        layout.addWidget(self.title_label)
+        layout.addStretch()
+        
+        self.btn_close = QPushButton("✕")
+        self.btn_close.setFixedSize(30, 30)
+        self.btn_close.clicked.connect(self.parent.close)
+        layout.addWidget(self.btn_close)
+
+    # --- THE DRAG ENGINE ---
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            # We store the position of the click RELATIVE to the window's top-left
+            self.drag_pos = event.globalPosition().toPoint() - self.parent.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.MouseButton.LeftButton:
+            # We move the window to the current mouse pos minus the original click offset
+            self.parent.move(event.globalPosition().toPoint() - self.drag_pos)
+            event.accept()
 
 class MainWindow(QMainWindow):
-    
-    def __init__(self):
+    def __init__(self, canvas_width, canvas_height):
         super().__init__()
-        # 1. SYSTEM INITIALIZATION (The POST Sequence)
-        # We define the basic window properties first.
+        # 1. THE OS FLAGS (The Handshake)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    
+
+        # 2. THE SHELL (The Case)
+        self.root_container = QFrame()
+        self.root_container.setObjectName("RootFrame")
+        self.setCentralWidget(self.root_container)
+
+        # 3. THE MASTER LAYOUT
+        self.main_layout = QVBoxLayout(self.root_container)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(0)
+
+        # 4. THE CUSTOM TITLE BAR
+        self.title_bar = CustomTitleBar(self)
+        self.main_layout.addWidget(self.title_bar)
+        
+        # 5. THE MOTHERBOARD
+        self.container = QWidget()
+        self.main_layout.addWidget(self.container) # This puts it UNDER the title bar
+
+        # ==== NOW CONTINUE WITH YOUR EXISTING SETUP ====
         self.setWindowTitle("Gesso")
         self.setWindowIcon(get_qicon("logo"))
         self.resize(1400, 900)
@@ -28,17 +120,15 @@ class MainWindow(QMainWindow):
         # Load custom resources (Fonts & Cursors)
         self.ui_font_name = load_custom_fonts(preferred_font="DM SANS")
         self.custom_arrow = get_custom_cursor("cursor_arrow", color="#2D2D2D", scale=0.4, rotation=15, hotspot=(0, 0))
-        self.custom_hand = get_custom_cursor("cursor_hand_pointing", color="#2D2D2D", scale=0.4, hotspot=(0, 0))
         self.setCursor(self.custom_arrow)
-        
+        self.custom_hand = get_custom_cursor("cursor_hand_pointing", color="#2D2D2D", scale=0.4, hotspot=(0, 0))
+                
         self.panels_positioned = False 
         
         # 2. CORE COMPONENTS
-        # The 'container' is our Motherboard; everything else plugs into it.
-        self.container = QWidget()
-        self.setCentralWidget(self.container)
-        
-        self.canvas = Canvas()
+        self.drawing_engine = DrawingEngine()
+        self.canvas = Canvas(canvas_width, canvas_height)
+        self.canvas.engine = self.drawing_engine
         self.canvas.setParent(self.container)
         
         # 3. INTERFACE CONTAINERS (Building the Shelves)
@@ -50,8 +140,6 @@ class MainWindow(QMainWindow):
         self.diagnostics.setParent(self)
         self.diagnostics.hide()
         
-        # 5. CONTENT POPULATION (Executing the Setup)
-        # This builds the buttons inside the Bag. We call it exactly ONCE.
         self.setup_the_bag_content()
         
         # 6. SECONDARY PANELS
@@ -64,7 +152,7 @@ class MainWindow(QMainWindow):
         self.brush_studio.hide()
         
         # 7. THEME & APPEARANCE
-        self.header_font = "Lora"   
+        self.header_font = "Inter"   
         self.body_font = "DM Sans"
         self.apply_theme("#FFFFFF")
         
@@ -79,37 +167,67 @@ class MainWindow(QMainWindow):
         self.setup_shortcuts()
         self.reference_board_window = None
 
-    # --- UI BUILDER METHODS ---
+    def center_canvas(self):
+        """Calculates the center of the screen to place the paper."""
+        if hasattr(self, 'canvas'):
+            # Find the middle of the app window
+            win_center = self.container.rect().center()
+            
+            # Find the middle of the paper (at current scale)
+            paper_w = self.canvas.canvas_width * self.canvas.view_scale
+            paper_h = self.canvas.canvas_height * self.canvas.view_scale
+            
+            # Set the offset so the paper is perfectly centered
+            new_x = win_center.x() - (paper_w / 2)
+            new_y = win_center.y() - (paper_h / 2)
+            self.canvas.view_offset = QPoint(int(new_x), int(new_y))
+            self.canvas.update()
 
+    # --- UI BUILDER METHODS ---
+    
     def setup_the_bag_content(self):
         """Creates the internal layout and tools for the Bag sidebar."""
-        # 'layout' is a local variable used only for building. 
-        # Using self.bag_frame as the parent ensures correct nesting.
         layout = QVBoxLayout(self.bag_frame)
-        layout.setContentsMargins(14, 25, 14, 25) 
+        layout.setContentsMargins(10, 15, 10, 15) 
         layout.setSpacing(12) 
         
         self.tool_group = QActionGroup(self)
+        
+        top_btn_layout = QHBoxLayout()
+        top_btn_layout.setSpacing(4)
         
         # --- TOP UTILITY ROW ---
         # Brush Studio Toggle
         self.btn_studio = QToolButton()
         self.btn_studio.setIcon(get_qicon("sliders"))
-        self.btn_studio.setFixedSize(40, 40)
+        self.btn_studio.setFixedSize(36, 36)
         self.btn_studio.setCheckable(True)
+        self.btn_studio.setStyleSheet("""
+            QPushButton {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E0E0;
+                border-radius: 8px;
+                font-size: 18px;
+            }
+            QPushButton:checked {
+                background-color: #BA4A00;
+                color: white;
+            }
+        """)
         self.btn_studio.clicked.connect(self.toggle_brush_studio)
         self.btn_studio.setCursor(self.custom_hand)
         
         # Diagnostics Toggle
-        self.btn_diag = QPushButton("📊")
-        self.btn_diag.setFixedSize(40, 40)
+        self.btn_diag = QToolButton()
+        self.btn_diag.setIcon(get_qicon("gauge"))
+        self.btn_diag.setFixedSize(36, 36)
         self.btn_diag.setToolTip("Toggle System Diagnostics (D)")
         self.btn_diag.setCheckable(True)
         self.btn_diag.setStyleSheet("""
             QPushButton {
                 background-color: #FFFFFF;
                 border: 1px solid #E0E0E0;
-                border-radius: 20px;
+                border-radius: 8px;
                 font-size: 18px;
             }
             QPushButton:checked {
@@ -118,13 +236,34 @@ class MainWindow(QMainWindow):
             }
         """)
         self.btn_diag.clicked.connect(self.toggle_diagnostics)
+        self.btn_studio.setCursor(self.custom_hand)
         
-        # Grouping Studio and Diagnostics at the top
-        top_btn_layout = QHBoxLayout()
+        # --- REFERENCE BOARD TOGGLE ---
+        self.btn_ref = QToolButton()
+        self.btn_ref.setIcon(get_qicon("chalkboard"))
+        self.btn_ref.setFixedSize(36, 36)
+        self.btn_ref.setToolTip("Toggle Reference Board (R)")
+        self.btn_ref.setCheckable(True)
+        self.btn_ref.setStyleSheet("""
+            QPushButton {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E0E0;
+                border-radius: 8px;
+                font-size: 18px;
+            }
+            QPushButton:checked {
+                background-color: #BA4A00;
+                color: white;
+            }
+        """)
+        self.btn_ref.clicked.connect(self.toggle_reference_board)
+        self.btn_ref.setCursor(self.custom_hand)
+        
+        # Grouping Studio and Diagnostics at the top        
         top_btn_layout.addStretch()
         top_btn_layout.addWidget(self.btn_studio)
-        top_btn_layout.addSpacing(8)
         top_btn_layout.addWidget(self.btn_diag)
+        top_btn_layout.addWidget(self.btn_ref)
         top_btn_layout.addStretch()
         layout.addLayout(top_btn_layout)
         
@@ -176,6 +315,7 @@ class MainWindow(QMainWindow):
         self.btn_color.clicked.connect(self.open_color_picker)
         self.btn_color.setCursor(self.custom_hand)
         
+        self.btn_color.setFixedSize(32, 32)
         color_row = QHBoxLayout()
         color_row.addStretch()
         color_row.addWidget(self.btn_color)
@@ -222,6 +362,15 @@ class MainWindow(QMainWindow):
         
         self.shortcut_grow = QShortcut(QKeySequence("]"), self)
         self.shortcut_grow.activated.connect(self.increase_brush_size)
+        
+        self.shortcut_reset = QShortcut(QKeySequence("Ctrl+0"), self)
+        self.shortcut_reset.activated.connect(self.reset_view)
+        
+    def decrease_brush_size(self):
+        self.slider_size.setValue(max(1, self.slider_size.value() - 10))
+
+    def increase_brush_size(self):
+        self.slider_size.setValue(min(500, self.slider_size.value() + 10))
 
     def sync_diag_ui(self, is_open):
         """Keeps all UI elements in sync with the DiagnosticsPanel visibility."""
@@ -273,8 +422,10 @@ class MainWindow(QMainWindow):
         self.brush_preview_label.setPixmap(icon.pixmap(24, 24))
 
     def setup_menus(self):
-        menubar = self.menuBar()
-        view_menu = menubar.addMenu("&View")
+        self.menuBar().setVisible(False)
+        
+        self.custom_menubar = QMenuBar()
+        view_menu = self.custom_menubar.addMenu("&View")
         
         self.diag_action = QAction("System Diagnostics", self)
         self.diag_action.setCheckable(True)
@@ -289,41 +440,65 @@ class MainWindow(QMainWindow):
         self.ref_board_action.triggered.connect(self.toggle_reference_board)
         view_menu.addAction(self.ref_board_action)
         
-    # Add this method to MainWindow class (anywhere after setup_menus):
+        self.main_layout.insertWidget(1, self.custom_menubar)
+        
     def toggle_reference_board(self):   
-        """Open or close the reference board window."""
+        """Open or close the reference board window and sync the UI."""
         if self.reference_board_window is None:
-            # Create the window
             self.reference_board_window = ReferenceBoardWindow()
             self.reference_board_window.show()
-        
-            # When window is closed, set to None
             self.reference_board_window.destroyed.connect(
-                lambda: setattr(self, 'reference_board_window', None)
+                lambda: self.sync_ref_ui(False)
             )
         else:
-            # Window exists, just show/hide
-            if self.reference_board_window.isVisible():
-                self.reference_board_window.hide()
-            else:
-                self.reference_board_window.show()
+            is_now_visible = not self.reference_board_window.isVisible()
+            self.reference_board_window.setVisible(is_now_visible)
+        
+        self.sync_ref_ui(self.reference_board_window.isVisible())
+        
+    def sync_ref_ui(self, is_open):
+        """Updates the button and menu state to match reality."""
+        self.btn_ref.setChecked(is_open)
+        if hasattr(self, 'ref_board_action'):
+            self.ref_board_action.setChecked(is_open)
+        if not is_open:
+            if self.reference_board_window and not self.reference_board_window.isVisible():
+                self.reference_board_window = None
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_D:
             self.toggle_diagnostics()
         elif event.key() == Qt.Key.Key_Z:
             self.canvas.keyPressEvent(event)
+        elif event.key() == Qt.Key.Key_BracketLeft:
+            self.decrease_brush_size()
+        elif event.key() == Qt.Key.Key_BracketRight:
+            self.increase_brush_size()
+        
         super().keyPressEvent(event)
 
     def resizeEvent(self, event):
         """Standard window resize handler to keep 'Islands' in place."""
-        w, h = self.container.width(), self.container.height()
-        self.canvas.setGeometry(0, 0, w, h)
+        # THE FIX: We measure the ROOT frame instead of the inner container.
+        # This ensures the Canvas 'Motherboard' spans the entire available area.
+        root_w = self.root_container.width()
+        root_h = self.root_container.height()
         
+        # Subtract the Title Bar and Menu Bar heights so the canvas doesn't 
+        # slide 'under' them.
+        offset_y = self.title_bar.height() + self.custom_menubar.height()
+        available_h = root_h - offset_y
+        
+        # Set the Canvas to the full available real estate
+        self.canvas.setGeometry(0, offset_y, root_w, available_h)
+        
+        # --- POSITIONING THE ISLANDS ---
+        # We use root_w and available_h for these now too!
         if not self.panels_positioned:
-            self.bag_frame.setGeometry(20, 30, 125, h - 60)
-            self.layer_panel.setGeometry(w - 260, 30, 240, h - 60)
-            self.panels_positioned = True
+            self.bag_frame.setGeometry(20, offset_y + 20, 125, available_h - 40)
+            self.layer_panel.setGeometry(root_w - 260, offset_y + 20, 240, available_h - 40)
+            # self.panels_positioned = True # Optional: Keep False if you want them to move on every resize
+            
         super().resizeEvent(event)
 
     def create_slider(self, label_text, min_val, max_val, default_val, callback):
@@ -347,12 +522,6 @@ class MainWindow(QMainWindow):
             self.brush_studio.move(self.width()//2 - 125, self.height()//2 - 200)
         else:
             self.brush_studio.hide()
-
-    def decrease_brush_size(self):
-        self.slider_size.setValue(max(1, self.slider_size.value() - 10))
-
-    def increase_brush_size(self):
-        self.slider_size.setValue(min(500, self.slider_size.value() + 10))
 
     def open_color_picker(self):
         color = QColorDialog.getColor(self.canvas.brush_color, self, "Select Color")
@@ -387,3 +556,31 @@ class MainWindow(QMainWindow):
         elif tool_type == ToolType.ERASER: self.act_erase.setChecked(True)
         elif tool_type == ToolType.FILL: self.act_fill.setChecked(True)
         elif tool_type == ToolType.LASSO: self.act_lasso.setChecked(True)
+        
+    def reset_view(self):
+        """Standardizes the view to fit the paper perfectly in the center."""
+        win_h = self.root_container.height()
+        if hasattr(self, 'title_bar') and self.title_bar is not None:
+            win_h -= self.title_bar.height()
+        if hasattr(self, 'custom_menubar') and self.custom_menubar is not None:
+            win_h -= self.custom_menubar.height()
+        
+        win_w = self.root_container.width()
+            
+        scale_x = (win_w * 0.8) / self.canvas.canvas_width
+        scale_y = (win_h * 0.8) / self.canvas.canvas_height
+        
+        new_scale = min(scale_x, scale_y, 1.0)
+        self.canvas.view_scale = new_scale
+
+        paper_w_scaled = self.canvas.canvas_width * new_scale
+        paper_h_scaled = self.canvas.canvas_height * new_scale
+        
+        offset_x = (win_w - paper_w_scaled) / 2
+        offset_y = (win_h - paper_h_scaled) / 2
+        
+        self.canvas.view_offset = QPoint(int(offset_x), int(offset_y))
+        
+        self.canvas.update()
+        if self.canvas is not None:
+            self.canvas.refresh_cursor()

@@ -1,7 +1,7 @@
 import sys
 from PyQt6.QtWidgets import QWidget
 from PyQt6.QtGui import (QPainter, QColor, QPen, QPixmap, QTabletEvent, 
-                        QPolygon, QTransform, QImage)
+                        QPolygon, QTransform, QImage, QRegion)
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QRect, QPointF, QSize
 
 # --- LOCAL IMPORTS ---
@@ -17,11 +17,12 @@ class Canvas(QWidget):
     layers_changed = pyqtSignal()
     color_changed = pyqtSignal(QColor)
 
-    def __init__(self):
+    def __init__(self, width, height):
         super().__init__()
         self.setObjectName("Canvas")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
+        
         
         # --- THE WORKER ---
         self.engine = DrawingEngine() 
@@ -45,6 +46,7 @@ class Canvas(QWidget):
         self.is_drawing = False
         self.last_point = QPoint()
         self.last_pressure = 1.0
+        self.last_mouse_pos = QPoint()
         
         # Hotkeys
         self.is_space_held = False   
@@ -64,6 +66,7 @@ class Canvas(QWidget):
         self.floating_pixmap = None  
         self.original_floating_pixmap = None
         self.floating_pos = QPoint() 
+        self.is_moving_selection = False
         
         # --- LAYERS & HISTORY ---
         self.layers = []
@@ -72,7 +75,8 @@ class Canvas(QWidget):
         self.history = HistoryManager(self)
         self.temp_layer_copy = None  
         self.stroke_rect = QRect()
-        # ✅ REMOVED: Duplicate undo_stack and undo_limit
+        self.canvas_width = width
+        self.canvas_height = height
         
         self.init_layers(800, 600)
         self.refresh_cursor()
@@ -219,6 +223,9 @@ class Canvas(QWidget):
             self.previous_tool = self.current_tool
             self.set_tool(ToolType.EYEDROPPER)
             
+        elif event.key() == Qt.Key.Key_Escape:
+            self.clear_selection()
+            
         # Space Pan
         elif event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
             self.is_space_held = True
@@ -278,17 +285,71 @@ class Canvas(QWidget):
         event.accept()
 
     def mousePressEvent(self, event):
+        # 1. Check for the Move Tool logic first
+        # If a selection exists and the user clicks INSIDE it...
+        if self.selection_rect and self.selection_rect.contains(event.pos()):
+            self.is_moving_selection = True
+            self.last_mouse_pos = event.pos()
+            
+            # If we haven't 'lifted' the pixels yet, do it now
+            if not self.floating_pixmap:
+                self.lift_selection() 
+            return # Exit early because we are moving, not creating a new box
+
+        # 2. Existing Marquee logic (Creating a new selection)
+        if self.current_tool == "marquee":
+            if self.selection_rect and not self.selection_rect.contains(event.pos()):
+                self.clear_selection()
+            else:
+                self.drag_start = event.pos()
+                self.selection_rect = QRect(self.drag_start, QSize())
+                self.update()
+                
         pos = event.position().toPoint()
-        # ✅ SIMPLIFIED: No more full-image backup
         self.handle_press(pos, 1.0)
             
+    def clear_selection(self):
+        self.selection_rect = None
+        self.drag_start = None
+        self.lasso_path = []
+        self.floating_pixmap = None
+        self.original_floating_pixmap = None
+        self.floating_pos = QPoint()
+        self.update()
+        
+    def lift_selection(self):
+        if not self.selection_rect:
+            return
+
+        # Grab the pixels from the active layer
+        self.floating_pixmap = self.active_layer.pixmap.copy(self.selection_rect)
+        self.floating_pos = self.selection_rect.topLeft()
+
+        # Clear the original area on the layer (so it's "cut" out)
+        painter = QPainter(self.active_layer.pixmap)
+        # This mode makes the pixels transparent
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+        painter.drawRect(self.selection_rect)
+        painter.end()
+        
+        self.update()
+            
     def mouseMoveEvent(self, event):
+        # We pass everything to handle_move so we don't have redundant code
         pos = event.position().toPoint()
+        # 1.0 is default pressure for a mouse
         self.handle_move(pos, 1.0, event.buttons())
-    
+        
     def mouseReleaseEvent(self, event):
-        # ✅ SIMPLIFIED: No more manual undo stack management
-        self.handle_release(event.button())
+        # 1. Standard Mouse Release
+        # We capture the position and then call our unified handler
+        pos = event.position().toPoint()
+        self.handle_release(event.button()) # This is where the magic happens
+        
+        # 2. Lasso Closure Logic
+        if self.current_tool == ToolType.LASSO:
+            # If we were drawing a lasso, we stop drawing points
+            self.update()
             
     def enterEvent(self, event):
         self.setFocus()
@@ -297,7 +358,7 @@ class Canvas(QWidget):
     def handle_press(self, pos, pressure):
         self.setFocus()
         
-        # 1. Panning / Zooming Overrides
+        # 1. PRIORITY OVERRIDES (Pan/Zoom)
         if self.is_space_held or self.current_tool == ToolType.PAN:
             self.is_panning = True
             self.pan_start = pos
@@ -315,51 +376,44 @@ class Canvas(QWidget):
         self.last_pressure = pressure
         self.engine.dist_to_next_dot = 0.0 
         
-        # 2. Eyedropper
+        # 2. EYEDROPPER
         if self.current_tool == ToolType.EYEDROPPER:
             self.color_picker(world_pos)
             return
             
-        # 3. Fill Tool
+        # 3. FILL TOOL
         if self.current_tool == ToolType.FILL:
             if self.active_layer:
-                # Capture before state for undo
                 rect = self.active_layer.pixmap.rect()
                 before = self.active_layer.pixmap.copy(rect)
-                
-                # Perform fill
                 self.engine.flood_fill(self.active_layer.pixmap, world_pos, self.engine.brush_color)
-                
-                # Capture after state
                 after = self.active_layer.pixmap.copy(rect)
-                
-                # Push to history
                 self.history.push_state(self.current_layer_index, rect, before, after)
                 self.compose_layers()
             return
 
-        # 4. Selection Start
+        # 4. SELECTION TOOLS (Marquee/Lasso)
         if self.current_tool == ToolType.MARQUEE:
             if self.floating_pixmap: self.anchor_selection()
-            self.selection_rect = QRect(world_pos, world_pos)
+            self.selection_rect = QRect(world_pos, QSize(0, 0))
             self.drag_start = world_pos
-            self.lasso_path = []
+            self.is_drawing = False # Ensure brush logic is disabled
             self.update()
             return
             
         if self.current_tool == ToolType.LASSO:
             if self.floating_pixmap: self.anchor_selection()
             self.selection_rect = None
-            self.lasso_path = [world_pos]
+            self.lasso_path = [world_pos] # Start a fresh path
+            self.is_drawing = False # Ensure brush logic is disabled
             self.update()
             return
 
-        # 5. Drawing Start
-        self.is_drawing = True
+        # 5. DRAWING START (Brush/Eraser ONLY)
         if self.current_tool in [ToolType.BRUSH, ToolType.ERASER] and self.active_layer:
+            self.is_drawing = True
             self.temp_layer_copy = self.active_layer.pixmap.copy()
             
-            # ✅ FIX: Use engine's max_reach instead of fixed size
             margin = self.engine.max_reach
             self.stroke_rect = QRect(
                 world_pos.x() - margin, 
@@ -368,10 +422,18 @@ class Canvas(QWidget):
                 margin * 2
             )
             
+            # Package the rules (Selections)
+            info = {
+                'rect': self.selection_rect,
+                'lasso': self.lasso_path if len(self.lasso_path) > 2 else None
+            }
+            
+            # Call the engine
             self.engine.draw_line(
                 self.active_layer.pixmap, world_pos, world_pos, 
                 pressure, pressure, 
-                is_eraser=(self.current_tool == ToolType.ERASER)
+                is_eraser=(self.current_tool == ToolType.ERASER),
+                selection_data=info
             )
             self.update()
         
@@ -381,55 +443,57 @@ class Canvas(QWidget):
             self.pan_start = pos
             self.update()
             return
-        if self.is_scrub_zooming:
-            delta_x = pos.x() - self.zoom_start_pos.x()
-            new_scale = max(0.1, min(self.zoom_start_scale * (1.0 + delta_x * 0.005), 5.0))
-            center = self.rect().center()
-            old_world = (center - self.view_offset) / self.view_scale 
-            self.view_scale = new_scale
-            self.view_offset = center - (old_world * self.view_scale)
-            self.update()
-            return
 
         if (buttons & Qt.MouseButton.LeftButton):
             world_pos = self.to_world(pos)
             
-            # Drawing
-            if self.is_drawing and self.current_tool in [ToolType.BRUSH, ToolType.ERASER]:
-                self.engine.draw_line(
-                    self.active_layer.pixmap, self.last_point, world_pos, 
-                    self.last_pressure, pressure, 
-                    is_eraser=(self.current_tool == ToolType.ERASER)
-                )
-                
-                # ✅ FIX: Use engine's max_reach for accurate bounding box
-                margin = self.engine.max_reach
-                r = QRect(self.last_point, world_pos).normalized().adjusted(
-                    -margin, -margin, margin, margin
-                )
-                self.stroke_rect = self.stroke_rect.united(r)
-                self.compose_layers()
-                
-            # Selection Drag
-            elif self.current_tool == ToolType.MARQUEE and self.drag_start:
-                self.selection_rect = QRect(self.drag_start, world_pos).normalized()
-                self.update()
+            # --- BRANCH A: PAINTING ---
+            if self.current_tool in [ToolType.BRUSH, ToolType.ERASER]:
+                if self.is_drawing:
+                    selection_info = {
+                        'rect': self.selection_rect,
+                        'lasso': self.lasso_path if len(self.lasso_path) > 2 else None
+                    }
+                    self.engine.draw_line(
+                        self.active_layer.pixmap, self.last_point, world_pos, 
+                        self.last_pressure, pressure, 
+                        is_eraser=(self.current_tool == ToolType.ERASER),
+                        selection_data=selection_info
+                    )
+                    
+                    margin = self.engine.max_reach
+                    r = QRect(self.last_point, world_pos).normalized().adjusted(
+                        -margin, -margin, margin, margin
+                    )
+                    self.stroke_rect = self.stroke_rect.united(r)
+                    self.compose_layers()
+
+            # --- BRANCH B: MARQUEE (The Fix) ---
+            elif self.current_tool == ToolType.MARQUEE:
+                if self.drag_start:
+                    # We create the box from the ORIGINAL click to the CURRENT mouse pos
+                    self.selection_rect = QRect(self.drag_start, world_pos).normalized()
+
+            # --- BRANCH C: LASSO (The Fix) ---
             elif self.current_tool == ToolType.LASSO:
+                # Add the new point to our existing list
                 self.lasso_path.append(world_pos)
-                self.update()
-                
-            # Move Tool
-            elif self.current_tool == ToolType.MOVE and self.floating_pixmap:
-                self.floating_pos += (world_pos - self.last_point)
-                self.update()
-                
+
+            # --- UNIVERSAL UPDATES ---
             self.last_point = world_pos
             self.last_pressure = pressure
-            
-            if self.current_tool != ToolType.BRUSH and self.current_tool != ToolType.ERASER:
-                self.update()
+            self.update() # Refreshes the screen to show the new lines/box
                 
     def handle_release(self, button):
+        self.is_drawing = False
+        
+        if self.current_tool == ToolType.LASSO:
+            if len(self.lasso_path) > 2:
+                print(f"LASSO CONFIRMED: {len(self.lasso_path)} points.")
+            else:
+                self.lasso_path = []
+        self.update()
+
         if self.is_panning:
             self.is_panning = False
             self.refresh_cursor()
@@ -475,6 +539,18 @@ class Canvas(QWidget):
             p.end()
             self.floating_pixmap = None
             self.compose_layers()
+    
+    def get_drawing_mask(self):
+        """Returns a QRegion that restricts where the brush can go."""
+        if self.selection_rect:
+            return QRegion(self.selection_rect)
+    
+        if self.lasso_path:
+            # If it's a lasso, we turn the path into a 'Region'
+            poly = QPolygon(self.lasso_path)
+            return QRegion(poly)
+    
+        return None # No selection? Paint anywhere!
 
     # --- Rendering for Selections ---
     def paintEvent(self, event):
@@ -500,9 +576,11 @@ class Canvas(QWidget):
             p.setPen(pen_b); p.drawRect(self.selection_rect)
             
         if self.lasso_path and not self.floating_pixmap:
+            print(f"DEBUG: Added point to Lasso. Current count: {len(self.lasso_path)}")
             poly = QPolygon(self.lasso_path)
-            p.setPen(pen_w); p.drawPolyline(poly)
-            p.setPen(pen_b); p.drawPolyline(poly)
+            p.setPen(pen_w); p.drawPolygon(poly)
+            p.setPen(pen_b); p.drawPolygon(poly)
+        
 
     # --- UTILS ---
     def to_world(self, screen_point):
@@ -622,5 +700,4 @@ class Canvas(QWidget):
             
         painter.end()
         
-        # ✅ ANTI-GHOST FIX: Force immediate repaint instead of lazy update
         self.repaint()

@@ -1,6 +1,6 @@
 import math
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QListWidget, QListWidgetItem, 
-                             QPushButton, QHBoxLayout, QLabel, QComboBox, QSlider)
+                            QPushButton, QHBoxLayout, QLabel, QComboBox, QSlider)
 from PyQt6.QtGui import QIcon
 from PyQt6.QtCore import Qt, QSize
 from draggable import DraggableFrame
